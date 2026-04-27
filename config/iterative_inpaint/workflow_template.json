@@ -1,0 +1,31 @@
+{
+  "base_iteration": 2000,
+  "defaults": {
+    "resolution": 1,
+    "removal_thresh": 0.7,
+    "lambda_dssim": 0.8,
+    "opacity_init": 0.1,
+    "lambda_lpips": 0.0005,
+    "finetune_iteration": 5000,
+    "circle_radius": -1.0,
+    "target_object_radius": -1.0
+  },
+  "mask_provider": {
+    "type": "manual_sam2",
+    "sync_segment_track_assets": true
+  },
+  "lama": {
+    "backend": "external",
+    "data_name_prefix": "iter360"
+  },
+  "rounds": [
+    {
+      "target_id": [26],
+      "surrounding_ids": [24, 10]
+    },
+    {
+      "target_id": [12],
+      "surrounding_ids": []
+    }
+  ]
+}

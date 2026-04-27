@@ -1,0 +1,8 @@
+{
+    "removal_thresh": 0.7,
+    "select_obj_id": [70, 36, 40, 33],
+    "target_id": [70],
+    "surrounding_ids": [36, 40, 33],
+    "target_object_radius": 0.5207,
+    "circle_radius": 0.3738
+}
