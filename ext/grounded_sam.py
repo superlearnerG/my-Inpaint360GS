@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import copy
+from pathlib import Path
 
 
 import numpy as np
@@ -23,17 +24,36 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-from huggingface_hub import hf_hub_download
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.pretrained_paths import groundingdino_checkpoint, require_pretrained_file
 
 def load_model_hf(repo_id, filename, ckpt_config_filename, device='cpu'):
-    cache_config_file = hf_hub_download(repo_id=repo_id, filename=ckpt_config_filename)
+    config_name = os.path.basename(ckpt_config_filename)
+    cache_config_file = (
+        PROJECT_ROOT
+        / "Segment-and-Track-Anything"
+        / "src"
+        / "groundingdino"
+        / "groundingdino"
+        / "config"
+        / config_name
+    )
+    if not cache_config_file.is_file():
+        raise FileNotFoundError(f"GroundingDINO config not found: {cache_config_file}")
 
-    args = SLConfig.fromfile(cache_config_file) 
+    args = SLConfig.fromfile(str(cache_config_file))
     model = build_model(args)
     args.device = device
 
-    cache_file = hf_hub_download(repo_id=repo_id, filename=filename)
-    checkpoint = torch.load(cache_file, map_location='cpu')
+    filename = os.path.basename(filename)
+    if filename == "groundingdino_swint_ogc.pth":
+        cache_file = groundingdino_checkpoint()
+    else:
+        cache_file = require_pretrained_file("groundingdino", filename)
+    checkpoint = torch.load(str(cache_file), map_location='cpu')
     log = model.load_state_dict(clean_state_dict(checkpoint['model']), strict=False)
     print("Model loaded from {} \n => {}".format(cache_file, log))
     _ = model.eval()
@@ -113,5 +133,3 @@ def select_obj_ioa(classification_maps, mask, ioa_thresh=0.7):
             classes_above_threshold.append(class_id)
 
     return torch.tensor(classes_above_threshold).cuda()
-
-

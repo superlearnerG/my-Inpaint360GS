@@ -3,6 +3,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRETRAINED_ROOT="${SCRIPT_DIR}/../pretrained_models"
+export INPAINT360GS_PRETRAINED_ROOT="$PRETRAINED_ROOT"
+export TORCH_HOME="${PRETRAINED_ROOT}/torch"
+export LAMA_MODEL="${LAMA_MODEL:-${PRETRAINED_ROOT}/big-lama/big-lama.pt}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
 SOURCE_PATH=""

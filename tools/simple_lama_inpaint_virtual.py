@@ -21,6 +21,7 @@ from utils.inpaint_target_paths import (
     get_before_2dinpaint_depth_dir,
     get_before_2dinpaint_root,
 )
+from utils.pretrained_paths import configure_pretrained_env
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +66,7 @@ def require_directory(path: Path) -> Path:
 
 
 def init_lama(device: str):
+    configure_pretrained_env(include_simple_lama=True)
     try:
         from simple_lama_inpainting import SimpleLama
     except ImportError as exc:

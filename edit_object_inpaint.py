@@ -51,6 +51,7 @@ from utils.inpaint_target_paths import (
     get_unseen_mask_ready_dir,
 )
 from utils.iterative_workflow import resolve_support_ply
+from utils.pretrained_paths import configure_pretrained_env
 
 C0 = 0.28209479177387814
 max_sh_degree = 3            
@@ -250,6 +251,7 @@ def finetune_inpaint(args, opt, model_path, iteration, views, gaussians, pipelin
 
     iterations = finetune_iteration    
     progress_bar = tqdm(range(iterations), desc="Finetuning progress")
+    configure_pretrained_env(include_simple_lama=False)
     LPIPS = lpips.LPIPS(net='vgg')
     for param in LPIPS.parameters():
         param.requires_grad = False      

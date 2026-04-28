@@ -1,4 +1,6 @@
 from collections import OrderedDict
+import os
+from pathlib import Path
 
 import torch
 
@@ -9,6 +11,11 @@ def normalize_activation(x, eps=1e-10):
 
 
 def get_state_dict(net_type: str = 'alex', version: str = '0.1'):
+    for parent in Path(__file__).resolve().parents:
+        if parent.name == "my-Inpaint360GS":
+            os.environ.setdefault("TORCH_HOME", str(parent.parent / "pretrained_models" / "torch"))
+            break
+
     # build url
     url = 'https://raw.githubusercontent.com/richzhang/PerceptualSimilarity/' \
         + f'master/lpips/weights/v{version}/{net_type}.pth'

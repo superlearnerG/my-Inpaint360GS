@@ -22,7 +22,15 @@ import numpy as np
 from tqdm import tqdm
 from argparse import ArgumentParser
 from typing import Dict, Any
+from pathlib import Path
+import sys
 from tools.vis_obj_color import vis_mask_images
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.pretrained_paths import cropformer_checkpoint, segment_anything_checkpoint
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
@@ -71,7 +79,9 @@ def load_segmentation_model(config: Dict[str, Any], method: str, device: str):
     - "hqsam": HQ-SAM (High-Quality Segment Anything Model via Detectron2)
     - "sam": Standard SAM (Segment Anything Model)
     """
+    config = dict(config)
     if method == "hqsam":
+        config["hqsam_weight_path"] = str(cropformer_checkpoint())
         cfg = get_cfg()
         add_deeplab_config(cfg)
         add_maskformer2_config(cfg)
@@ -81,6 +91,7 @@ def load_segmentation_model(config: Dict[str, Any], method: str, device: str):
         return VisualizationDemo(cfg)
 
     elif method == "sam":
+        config["sam_weight_path"] = str(segment_anything_checkpoint(config["sam_encoder_version"]))
         sam = sam_model_registry[config["sam_encoder_version"]](checkpoint=config["sam_weight_path"]).to(device)
         return SamAutomaticMaskGenerator(
             sam,

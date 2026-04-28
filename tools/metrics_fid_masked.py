@@ -7,12 +7,15 @@ import torch
 import torchvision.transforms.functional as tf
 from utils.loss_utils import ssim
 from lpipsPyTorch import lpips
+from utils.pretrained_paths import configure_pretrained_env
 import json
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser
 from pytorch_fid import fid_score
 import numpy as np
+
+configure_pretrained_env(include_simple_lama=False)
 
 def center_crop_array(arr, crop_ratio=0.8):
     h, w = arr.shape[:2]

@@ -1,12 +1,17 @@
 import os, csv, argparse
 import sys
+from pathlib import Path
 import torch, torchaudio, timm
 import numpy as np
 from torch.cuda.amp import autocast
 import IPython
 current_directory = os.path.dirname(os.path.abspath(__file__))  
 sys.path.append(current_directory)  
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 from src.models import ASTModel
+from utils.pretrained_paths import ast_checkpoint
 
 # Create a new class that inherits the original ASTModel class
 class ASTModelVis(ASTModel):
@@ -78,7 +83,7 @@ def load_label(label_csv):
 def ASTpredict():
     # Assume each input spectrogram has 1024 time frames
     input_tdim = 1024
-    checkpoint_path = './ast_master/pretrained_models/audio_mdl.pth'
+    checkpoint_path = str(ast_checkpoint())
     # now load the visualization model
     ast_mdl = ASTModelVis(label_dim=527, input_tdim=input_tdim, imagenet_pretrain=False, audioset_pretrain=False)
     print(f'[*INFO] load checkpoint: {checkpoint_path}')

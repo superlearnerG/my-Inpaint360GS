@@ -1,6 +1,17 @@
+from pathlib import Path
+import sys
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.pretrained_paths import deaot_checkpoint, segment_anything_checkpoint
+
+
 # Explanation of generator_args is in sam/segment_anything/automatic_mask_generator.py: SamAutomaticMaskGenerator
 sam_args = {
-    'sam_checkpoint': "ckpt/sam_vit_b_01ec64.pth",
+    'sam_checkpoint': str(segment_anything_checkpoint("vit_b")),
     'model_type': "vit_b",
     'generator_args':{
         'points_per_side': 16,
@@ -15,7 +26,7 @@ sam_args = {
 aot_args = {
     'phase': 'PRE_YTB_DAV',
     'model': 'r50_deaotl',
-    'model_path': 'ckpt/R50_DeAOTL_PRE_YTB_DAV.pth',
+    'model_path': str(deaot_checkpoint("r50_deaotl")),
     'long_term_mem_gap': 9999,
     'max_len_long_term': 9999,
     'gpu_id': 0,

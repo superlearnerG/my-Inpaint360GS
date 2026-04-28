@@ -2,6 +2,12 @@ import torch
 import numpy as np
 import cv2
 import PIL
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from groundingdino.models import build_model as build_grounding_dino
 from groundingdino.util.slconfig import SLConfig
@@ -10,11 +16,12 @@ from groundingdino.util.inference import annotate, load_image, predict
 import groundingdino.datasets.transforms as T
 
 from torchvision.ops import box_convert
+from utils.pretrained_paths import groundingdino_checkpoint
 
 class Detector:
     def __init__(self, device):
         config_file = "src/groundingdino/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-        grounding_dino_ckpt = './ckpt/groundingdino_swint_ogc.pth'
+        grounding_dino_ckpt = str(groundingdino_checkpoint())
         args = SLConfig.fromfile(config_file) 
         args.device = device
         self.deivce = device

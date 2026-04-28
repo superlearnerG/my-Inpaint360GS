@@ -1,6 +1,7 @@
 import os
 import cv2
 from model_args import segtracker_args,sam_args,aot_args
+from utils.pretrained_paths import pretrained_path
 from PIL import Image
 from aot_tracker import _palette
 import numpy as np
@@ -64,9 +65,9 @@ def create_dir(dir_path):
 
 
 aot_model2ckpt = {
-    "deaotb": "./ckpt/DeAOTB_PRE_YTB_DAV.pth",
-    "deaotl": "./ckpt/DeAOTL_PRE_YTB_DAV",
-    "r50_deaotl": "./ckpt/R50_DeAOTL_PRE_YTB_DAV.pth",
+    "deaotb": str(pretrained_path("deaot", "DeAOTB_PRE_YTB_DAV.pth")),
+    "deaotl": str(pretrained_path("deaot", "DeAOTL_PRE_YTB_DAV.pth")),
+    "r50_deaotl": str(pretrained_path("deaot", "R50_DeAOTL_PRE_YTB_DAV.pth")),
 }
 
 

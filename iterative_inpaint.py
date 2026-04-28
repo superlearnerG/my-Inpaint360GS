@@ -33,6 +33,7 @@ from utils.iterative_workflow import (
     save_scene_snapshot,
     write_json,
 )
+from utils.pretrained_paths import configure_pretrained_env, torch_home
 
 
 def parse_args() -> argparse.Namespace:
@@ -283,7 +284,9 @@ def cleanup_minimal_round(paths: dict[str, Path]) -> list[str]:
 
 def run_cmd(command: list[str], cwd: Path | None = None) -> None:
     print("$", " ".join(command))
+    configure_pretrained_env(include_simple_lama=False)
     env = os.environ.copy()
+    env["TORCH_HOME"] = str(torch_home())
     project_root_str = str(PROJECT_ROOT)
     existing_pythonpath = env.get("PYTHONPATH")
     if existing_pythonpath:

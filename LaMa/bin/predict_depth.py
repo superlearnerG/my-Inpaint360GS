@@ -19,9 +19,16 @@ import logging
 import os
 import sys
 import traceback
+from pathlib import Path
 
 from saicinpainting.evaluation.utils import move_to_device
 from saicinpainting.evaluation.refinement import refine_predict
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.pretrained_paths import configure_pretrained_env, require_external_lama_dir
 
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
@@ -47,6 +54,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def main(args):
+    configure_pretrained_env(include_simple_lama=False)
 
     default_config = OmegaConf.load('./configs/prediction/default.yaml')
 
@@ -61,7 +69,7 @@ def main(args):
     custom_config = OmegaConf.create({
         'refine': True,
         'model': {
-            'path': './big-lama'        
+            'path': str(require_external_lama_dir())
         },
         'indir': indir,
         'outdir': outdir

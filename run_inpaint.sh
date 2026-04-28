@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e 
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRETRAINED_ROOT="${SCRIPT_DIR}/../pretrained_models"
+export INPAINT360GS_PRETRAINED_ROOT="$PRETRAINED_ROOT"
+export TORCH_HOME="${PRETRAINED_ROOT}/torch"
+
 # --- Configuration ---
 ############## "inpaint360" ##############
 dataset_name="inpaint360"
@@ -21,7 +26,7 @@ python tools/prepare_lama_data.py  -s data/${dataset_name}/${scene} -m output/${
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate lama
 cd LaMa
-export TORCH_HOME=$(pwd) && export PYTHONPATH=$(pwd)
+export PYTHONPATH=$(pwd)
 python bin/predict_color.py --data_name 360_${scene}_virtual
 python bin/predict_depth.py --data_name 360_${scene}_virtual
 cd ..

@@ -29,6 +29,7 @@ from utils.inpaint_target_paths import (
     normalize_target_id,
 )
 from utils.iterative_workflow import remove_path, write_json
+from utils.pretrained_paths import deaot_checkpoint, segment_anything_checkpoint
 
 
 @dataclass
@@ -151,11 +152,13 @@ def ensure_sta_sys_path() -> None:
             sys.path.insert(0, str(path))
 
 
-def resolve_checkpoint(path_value: str | None, default_path: str, root: Path) -> Path:
+def resolve_checkpoint(path_value: str | None, default_path: str, root: Path, pretrained_default: Path | None = None) -> Path:
     if path_value:
         candidate = Path(path_value).expanduser()
         if not candidate.is_absolute():
             candidate = (root / candidate).resolve()
+    elif pretrained_default is not None:
+        candidate = pretrained_default.resolve()
     else:
         candidate = (root / default_path).resolve()
     if not candidate.is_file():
@@ -461,7 +464,12 @@ def build_segmentor(args: argparse.Namespace):
     sam_cfg["model_type"] = args.sam_model_type
     sam_cfg["generator_args"]["points_per_side"] = args.points_per_side
     sam_cfg["sam_checkpoint"] = str(
-        resolve_checkpoint(args.sam_checkpoint, sam_cfg["sam_checkpoint"], SEGTRACK_ROOT)
+        resolve_checkpoint(
+            args.sam_checkpoint,
+            sam_cfg["sam_checkpoint"],
+            SEGTRACK_ROOT,
+            pretrained_default=segment_anything_checkpoint(args.sam_model_type),
+        )
     )
 
     return segmentor_module.Segmentor(sam_cfg)
@@ -478,7 +486,12 @@ def build_aot_tracker(args: argparse.Namespace):
     aot_cfg["long_term_mem_gap"] = args.long_term_mem_gap
     aot_cfg["max_len_long_term"] = args.max_len_long_term
     aot_cfg["model_path"] = str(
-        resolve_checkpoint(args.aot_checkpoint, aot_cfg["model_path"], SEGTRACK_ROOT)
+        resolve_checkpoint(
+            args.aot_checkpoint,
+            aot_cfg["model_path"],
+            SEGTRACK_ROOT,
+            pretrained_default=deaot_checkpoint(args.aot_model),
+        )
     )
 
     return aot_tracker_module.get_aot(aot_cfg)

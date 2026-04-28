@@ -19,7 +19,7 @@ pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 torchaudio==2.0.1+cu118
 # Install project dependencies
 bash install.sh
 ```
-Download Segmentation Model Weights [CropFormer_hornet_3x_03823a.pth](https://huggingface.co/datasets/qqlu1992/Adobe_EntitySeg/tree/main/CropFormer_model/Entity_Segmentation/CropFormer_hornet_3x)， put it under seg/weight/
+Download Segmentation Model Weights [CropFormer_hornet_3x_03823a.pth](https://huggingface.co/datasets/qqlu1992/Adobe_EntitySeg/tree/main/CropFormer_model/Entity_Segmentation/CropFormer_hornet_3x)， put it under `../pretrained_models/entityseg/`
 
 ## 🎨 2. 2D Inpainting Setup: `lama`
 ```bash
@@ -29,4 +29,4 @@ conda activate lama
 conda install pytorch torchvision torchaudio cudatoolkit=10.2 -c pytorch -y
 pip install pytorch-lightning==1.2.9
 ```
-Download the [big-lama.zip](https://drive.google.com/drive/folders/1B2x7eQDgecTL0oh3LSIBDGj0fTxs6Ips) weights, extract them under ./LaMa
+Download the [big-lama.zip](https://drive.google.com/drive/folders/1B2x7eQDgecTL0oh3LSIBDGj0fTxs6Ips) weights, extract it as `../pretrained_models/big-lama/` when using the external LaMa backend.

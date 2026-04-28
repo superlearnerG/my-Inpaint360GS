@@ -1,5 +1,8 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRETRAINED_ROOT="${SCRIPT_DIR}/../pretrained_models"
+
 # 1. Install PyTorch with specific CUDA support
 echo "Install the appropriate version of PyTorch based on your CUDA version."
 
@@ -36,8 +39,8 @@ cd ../../../../../../../../..
 python seg/patch_fvcore.py
 
 # Setup weights directory
-mkdir -p seg/weight/
-# NOTE: Download weights manually from HuggingFace to seg/weight/ if not automated:
+mkdir -p "${PRETRAINED_ROOT}/entityseg"
+# NOTE: Download weights manually from HuggingFace to ${PRETRAINED_ROOT}/entityseg/ if not automated:
 # https://huggingface.co/datasets/qqlu1992/Adobe_EntitySeg/tree/main/CropFormer_model/Entity_Segmentation/CropFormer_hornet_3x
 
 # 6. Install Segment-and-Track-Anything module
