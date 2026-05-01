@@ -17,10 +17,42 @@ import cv2
 
 WARNED = False
 
+def _raw_depth_array_2d(depth, depth_path):
+    depth = np.asarray(depth)
+    if depth.ndim == 3:
+        if depth.shape[-1] == 1:
+            depth = depth[..., 0]
+        elif depth.shape[0] == 1:
+            depth = depth[0]
+        else:
+            raise ValueError(f"Expected a single-channel raw depth map at '{depth_path}', got shape {depth.shape}.")
+    if depth.ndim != 2:
+        raise ValueError(f"Expected a 2D raw depth map at '{depth_path}', got shape {depth.shape}.")
+    return depth.astype(np.float32, copy=False)
+
+def _load_raw_invdepthmap(depth_path, depth_scale):
+    raw_depth = _raw_depth_array_2d(np.load(depth_path), depth_path)
+    scaled_depth = raw_depth * float(depth_scale)
+    valid = np.isfinite(scaled_depth) & (scaled_depth > 0.0)
+    invdepthmap = np.zeros_like(scaled_depth, dtype=np.float32)
+    invdepthmap[valid] = 1.0 / np.maximum(scaled_depth[valid], 1e-6)
+    return invdepthmap, valid.astype(np.float32)
+
 def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dataset):
     image = Image.open(cam_info.image_path)
 
-    if cam_info.depth_path != "":
+    invdepthmask = None
+    raw_depth_path = getattr(cam_info, "raw_depth_path", "")
+    if raw_depth_path:
+        try:
+            invdepthmap, invdepthmask = _load_raw_invdepthmap(raw_depth_path, getattr(cam_info, "raw_depth_scale", 1.0))
+        except FileNotFoundError:
+            print(f"Error: The raw depth file at path '{raw_depth_path}' was not found.")
+            raise
+        except Exception as e:
+            print(f"An unexpected error occurred when trying to read raw depth at {raw_depth_path}: {e}")
+            raise
+    elif cam_info.depth_path != "":
         try:
             if is_nerf_synthetic:
                 invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / 512
@@ -64,7 +96,8 @@ def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dat
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, depth_params=cam_info.depth_params,
                   image=image, invdepthmap=invdepthmap,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device,
-                  train_test_exp=args.train_test_exp, is_test_dataset=is_test_dataset, is_test_view=cam_info.is_test)
+                  train_test_exp=args.train_test_exp, is_test_dataset=is_test_dataset, is_test_view=cam_info.is_test,
+                  invdepthmask=invdepthmask)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args, is_nerf_synthetic, is_test_dataset):
     camera_list = []

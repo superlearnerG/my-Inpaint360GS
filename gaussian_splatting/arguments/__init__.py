@@ -52,6 +52,8 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self._depths = ""
+        self.use_depth_loss = False
+        self.depth_scale = 0.0
         self._resolution = -1
         self._white_background = False
         self.train_test_exp = False
@@ -66,6 +68,8 @@ class ModelParams(ParamGroup):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
         g.init_mode = args.init_mode  #  init_mode 
+        if getattr(g, "use_depth_loss", False) and not getattr(g, "depths", ""):
+            g.depths = "depth"
         return g
 
 class PipelineParams(ParamGroup):

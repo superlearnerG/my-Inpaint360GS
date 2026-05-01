@@ -14,7 +14,7 @@ import sys
 from PIL import Image
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
-    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
+    read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text, read_next_bytes
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 import numpy as np
 import json
@@ -36,6 +36,8 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     is_test: bool
+    raw_depth_path: str = ""
+    raw_depth_scale: float = 1.0
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -68,7 +70,238 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_folder, depths_folder, test_cam_names_list):
+def _split_name_keys(text):
+    stripped = str(text).strip()
+    if not stripped:
+        return set()
+    basename = os.path.basename(stripped)
+    stem = Path(basename).stem
+    return {stripped, basename, stem}
+
+def _read_split_list(list_path):
+    split_names = set()
+    with open(list_path, "r", encoding="utf-8") as file:
+        for line in file:
+            item = line.strip()
+            if not item or item.startswith("#"):
+                continue
+            split_names.update(_split_name_keys(item))
+    return split_names
+
+def _name_in_split(image_name, split_names):
+    return bool(_split_name_keys(image_name) & split_names)
+
+def _load_dataset_split(path):
+    train_list_path = os.path.join(path, "train_list.txt")
+    test_list_path = os.path.join(path, "test_list.txt")
+    has_train_list = os.path.exists(train_list_path)
+    has_test_list = os.path.exists(test_list_path)
+    if has_train_list and has_test_list:
+        train_split_names = _read_split_list(train_list_path)
+        test_split_names = _read_split_list(test_list_path)
+        overlap = train_split_names & test_split_names
+        if overlap:
+            preview = ", ".join(sorted(overlap)[:10])
+            raise ValueError(f"train_list.txt and test_list.txt overlap: {preview}")
+        print(f"COLMAP split: using train_list.txt and test_list.txt from {path}")
+        return {
+            "mode": "list",
+            "train_names": train_split_names,
+            "test_names": test_split_names,
+        }
+    if has_train_list != has_test_list:
+        print("Only one of train_list.txt/test_list.txt was found; falling back to basename holdout split.")
+    return {"mode": "holdout", "train_names": set(), "test_names": set()}
+
+def _basename_sequence_number(image_name):
+    stem = Path(os.path.basename(str(image_name))).stem
+    try:
+        return int(stem)
+    except ValueError:
+        pass
+    digits = []
+    for char in reversed(stem):
+        if not char.isdigit():
+            break
+        digits.append(char)
+    if not digits:
+        return None
+    return int("".join(reversed(digits)))
+
+def _is_holdout_test_image(image_name, llffhold):
+    sequence_number = _basename_sequence_number(image_name)
+    return sequence_number is not None and sequence_number % llffhold == 0
+
+def _depth_array_2d(depth, depth_path):
+    depth = np.asarray(depth)
+    if depth.ndim == 3:
+        if depth.shape[-1] == 1:
+            depth = depth[..., 0]
+        elif depth.shape[0] == 1:
+            depth = depth[0]
+        else:
+            raise ValueError(f"Expected a single-channel raw depth map at '{depth_path}', got shape {depth.shape}.")
+    if depth.ndim != 2:
+        raise ValueError(f"Expected a 2D raw depth map at '{depth_path}', got shape {depth.shape}.")
+    return depth
+
+def _resolve_raw_depth_folder(path, depths, use_depth_loss):
+    if not use_depth_loss:
+        return ""
+    depth_dir = depths if depths else "depth"
+    depth_dir = os.path.expanduser(str(depth_dir))
+    if os.path.isabs(depth_dir):
+        depth_folder = depth_dir
+    elif os.path.isdir(depth_dir):
+        depth_folder = os.path.abspath(depth_dir)
+    else:
+        depth_folder = os.path.join(path, depth_dir)
+    if not os.path.isdir(depth_folder):
+        raise FileNotFoundError(f"--use_depth_loss expects raw .npy depth maps under '{depth_folder}'.")
+    print(f"[Depth Loss] Loading raw depth maps from {depth_folder}")
+    return depth_folder
+
+def _raw_depth_path(depths_folder, image_name):
+    if depths_folder == "":
+        return ""
+    return os.path.join(depths_folder, f"{Path(image_name).stem}.npy")
+
+def _read_points3d_xyz_by_id_binary(path):
+    points = {}
+    with open(path, "rb") as fid:
+        num_points = read_next_bytes(fid, 8, "Q")[0]
+        for _ in range(num_points):
+            point_props = read_next_bytes(fid, 43, "QdddBBBd")
+            point_id = int(point_props[0])
+            points[point_id] = np.array(point_props[1:4], dtype=np.float64)
+            track_length = read_next_bytes(fid, 8, "Q")[0]
+            fid.seek(8 * track_length, 1)
+    return points
+
+def _read_points3d_xyz_by_id_text(path):
+    points = {}
+    with open(path, "r") as fid:
+        for line in fid:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            elems = line.split()
+            points[int(elems[0])] = np.array(tuple(map(float, elems[1:4])), dtype=np.float64)
+    return points
+
+def _read_points3d_xyz_by_id(path):
+    bin_path = os.path.join(path, "sparse/0/points3D.bin")
+    txt_path = os.path.join(path, "sparse/0/points3D.txt")
+    if os.path.exists(bin_path):
+        try:
+            return _read_points3d_xyz_by_id_binary(bin_path)
+        except Exception:
+            if not os.path.exists(txt_path):
+                raise
+    if os.path.exists(txt_path):
+        return _read_points3d_xyz_by_id_text(txt_path)
+    raise FileNotFoundError(f"COLMAP points3D file not found under {os.path.join(path, 'sparse/0')}")
+
+def _select_evenly_spaced(items, max_count):
+    if len(items) <= max_count:
+        return items
+    indices = np.linspace(0, len(items) - 1, max_count, dtype=int)
+    return [items[int(idx)] for idx in indices]
+
+def _estimate_depth_scale_from_colmap(path, cam_extrinsics, depths_folder, max_views=32, max_points_per_view=12000):
+    xyz_by_id = _read_points3d_xyz_by_id(path)
+    ratios = []
+    used_views = 0
+
+    extrinsics = sorted(cam_extrinsics.values(), key=lambda extr: extr.name)
+    for extr in _select_evenly_spaced(extrinsics, max_views):
+        depth_path = _raw_depth_path(depths_folder, extr.name)
+        if not os.path.exists(depth_path):
+            continue
+
+        point_ids = np.asarray(extr.point3D_ids)
+        xys = np.asarray(extr.xys)
+        valid_indices = np.flatnonzero(point_ids != -1)
+        if valid_indices.size == 0:
+            continue
+        if valid_indices.size > max_points_per_view:
+            valid_indices = np.asarray(_select_evenly_spaced(valid_indices.tolist(), max_points_per_view))
+
+        matched_xys = []
+        matched_xyz = []
+        for idx in valid_indices:
+            xyz = xyz_by_id.get(int(point_ids[idx]))
+            if xyz is None:
+                continue
+            matched_xys.append(xys[idx])
+            matched_xyz.append(xyz)
+        if not matched_xyz:
+            continue
+
+        raw_depth = _depth_array_2d(np.load(depth_path, mmap_mode="r"), depth_path)
+        matched_xys = np.asarray(matched_xys, dtype=np.float64)
+        matched_xyz = np.asarray(matched_xyz, dtype=np.float64)
+        u = np.rint(matched_xys[:, 0]).astype(np.int64)
+        v = np.rint(matched_xys[:, 1]).astype(np.int64)
+        in_image = (u >= 0) & (v >= 0) & (u < raw_depth.shape[1]) & (v < raw_depth.shape[0])
+        if not np.any(in_image):
+            continue
+
+        R = qvec2rotmat(extr.qvec)
+        t = np.asarray(extr.tvec, dtype=np.float64)
+        z_colmap = (R @ matched_xyz[in_image].T).T[:, 2] + t[2]
+        raw_z = np.asarray(raw_depth[v[in_image], u[in_image]], dtype=np.float64)
+        valid = np.isfinite(raw_z) & (raw_z > 0.0) & np.isfinite(z_colmap) & (z_colmap > 0.0)
+        view_ratios = z_colmap[valid] / raw_z[valid]
+        view_ratios = view_ratios[np.isfinite(view_ratios) & (view_ratios > 0.0)]
+        if view_ratios.size == 0:
+            continue
+        ratios.append(view_ratios)
+        used_views += 1
+
+    if not ratios:
+        raise RuntimeError(
+            "Unable to estimate --depth_scale from COLMAP tracks and raw depth maps. "
+            "Pass a positive --depth_scale manually."
+        )
+
+    ratios = np.concatenate(ratios)
+    if ratios.size < 100:
+        raise RuntimeError(
+            f"Only {ratios.size} valid COLMAP/raw-depth correspondences were found; "
+            "pass a positive --depth_scale manually."
+        )
+
+    scale = float(np.median(ratios))
+    print(
+        "[Depth Loss] Estimated raw-depth scale from COLMAP tracks: "
+        f"{scale:.6f} ({ratios.size} samples from {used_views} views; "
+        f"p05={np.percentile(ratios, 5):.6f}, p95={np.percentile(ratios, 95):.6f})"
+    )
+    return scale
+
+def _resolve_depth_scale(path, cam_extrinsics, depths_folder, requested_depth_scale, use_depth_loss):
+    if not use_depth_loss:
+        return 1.0
+    requested_depth_scale = float(requested_depth_scale)
+    if requested_depth_scale > 0.0:
+        print(f"[Depth Loss] Using manual raw-depth scale: {requested_depth_scale:.6f}")
+        return requested_depth_scale
+    return _estimate_depth_scale_from_colmap(path, cam_extrinsics, depths_folder)
+
+def _validate_train_raw_depth_paths(train_cam_infos):
+    missing = [
+        cam.image_name
+        for cam in train_cam_infos
+        if not getattr(cam, "raw_depth_path", "") or not os.path.exists(getattr(cam, "raw_depth_path", ""))
+    ]
+    if missing:
+        preview = ", ".join(missing[:10])
+        suffix = "" if len(missing) <= 10 else f", ... ({len(missing)} missing)"
+        raise FileNotFoundError(f"Missing raw .npy depth maps for training views: {preview}{suffix}")
+
+def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_folder, depths_folder, test_cam_names_list,
+                      raw_depths_folder="", raw_depth_scale=1.0):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -108,10 +341,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
         image_path = os.path.join(images_folder, extr.name)
         image_name = extr.name
         depth_path = os.path.join(depths_folder, f"{extr.name[:-n_remove]}.png") if depths_folder != "" else ""
+        raw_depth_path = _raw_depth_path(raw_depths_folder, image_name) if raw_depths_folder != "" else ""
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, depth_params=depth_params,
                               image_path=image_path, image_name=image_name, depth_path=depth_path,
-                              width=width, height=height, is_test=image_name in test_cam_names_list)
+                              width=width, height=height, is_test=image_name in test_cam_names_list,
+                              raw_depth_path=raw_depth_path, raw_depth_scale=raw_depth_scale)
         cam_infos.append(cam_info)
 
     sys.stdout.write('\n')
@@ -155,10 +390,16 @@ def readColmapSceneInfo(args, images, depths, eval, train_test_exp, llffhold=8):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
+    use_depth_loss = getattr(args, "use_depth_loss", False)
+    raw_depths_folder = _resolve_raw_depth_folder(path, depths, use_depth_loss)
+    raw_depth_scale = _resolve_depth_scale(
+        path, cam_extrinsics, raw_depths_folder, getattr(args, "depth_scale", 0.0), use_depth_loss
+    )
+
     depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
     ## if depth_params_file isnt there AND depths file is here -> throw error
     depths_params = None
-    if depths != "":
+    if depths != "" and not use_depth_loss:
         try:
             with open(depth_params_file, "r") as f:
                 depths_params = json.load(f)
@@ -177,21 +418,24 @@ def readColmapSceneInfo(args, images, depths, eval, train_test_exp, llffhold=8):
             print(f"An unexpected error occurred when trying to open depth_params.json file: {e}")
             sys.exit(1)
 
+    split_config = _load_dataset_split(path) if eval else {"mode": "disabled", "train_names": set(), "test_names": set()}
     if eval:
         if "360" in path:
             llffhold = 8
-        if llffhold:
+        cam_names = sorted([cam_extrinsics[cam_id].name for cam_id in cam_extrinsics])
+        if split_config["mode"] == "list":
+            test_cam_names_list = [name for name in cam_names if _name_in_split(name, split_config["test_names"])]
+        elif llffhold:
             print("\n ------------LLFF HOLD-------------")
-            print(f"We split train and test images every llffhold images {llffhold}")
-            cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
-            cam_names = sorted(cam_names)                                          # 
-
+            print(f"COLMAP split: train_list.txt/test_list.txt not found; using basename index % {llffhold} == 0 as test")
             if "inpaint360" in args.source_path:
                 print("\n We are using our inpaint360 dataset.")
-                train_and_test_cam_names = [name for idx, name in enumerate(cam_names) if "test" not in name]             # inpainting gt
-                test_cam_names_list = [name for idx, name in enumerate(train_and_test_cam_names) if idx % llffhold == 0] 
+                train_and_test_cam_names = [name for name in cam_names if "test" not in name]             # inpainting gt
+                test_cam_names_list = [name for name in train_and_test_cam_names if _is_holdout_test_image(name, llffhold)]
             else:
-                test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]       
+                test_cam_names_list = [name for name in cam_names if _is_holdout_test_image(name, llffhold)]
+            if not test_cam_names_list:
+                print(f"Warning: no numeric basename matched index % {llffhold} == 0; test set is empty.")
         else:
             with open(os.path.join(path, "sparse/0", "test.txt"), 'r') as file:
                 test_cam_names_list = [line.strip() for line in file]
@@ -200,13 +444,23 @@ def readColmapSceneInfo(args, images, depths, eval, train_test_exp, llffhold=8):
         test_cam_names_list = []
 
     reading_dir = "images" if images == None else images
+    legacy_depths_folder = os.path.join(path, depths) if depths != "" and not use_depth_loss else ""
     cam_infos_unsorted = readColmapCameras(
         cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, depths_params=depths_params,
         images_folder=os.path.join(path, reading_dir), 
-        depths_folder=os.path.join(path, depths) if depths != "" else "", test_cam_names_list=test_cam_names_list)  # test images
+        depths_folder=legacy_depths_folder, test_cam_names_list=test_cam_names_list,
+        raw_depths_folder=raw_depths_folder, raw_depth_scale=raw_depth_scale)  # test images
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
-    if "inpaint360" in args.source_path:
+    if eval and split_config["mode"] == "list":
+        train_cam_infos = [c for c in cam_infos if _name_in_split(c.image_name, split_config["train_names"])]
+        test_cam_infos = [c for c in cam_infos if _name_in_split(c.image_name, split_config["test_names"])]
+        if not train_cam_infos:
+            raise ValueError(f"No COLMAP cameras matched {os.path.join(path, 'train_list.txt')}.")
+        if not test_cam_infos:
+            raise ValueError(f"No COLMAP cameras matched {os.path.join(path, 'test_list.txt')}.")
+        inpaint_cam_infos = []
+    elif "inpaint360" in args.source_path:
         train_inpaint_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
         train_cam_infos = [c for c in train_inpaint_cam_infos if "test" not in c.image_name]
         inpaint_cam_infos = [c for c in train_inpaint_cam_infos if "test" in c.image_name]   
@@ -214,6 +468,9 @@ def readColmapSceneInfo(args, images, depths, eval, train_test_exp, llffhold=8):
     else:
         train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
         test_cam_infos = [c for c in cam_infos if c.is_test]
+
+    if use_depth_loss:
+        _validate_train_raw_depth_paths(train_cam_infos)
 
     print("\nTraining images:     ", len(train_cam_infos))
     print("Testing images:     ", len(test_cam_infos))

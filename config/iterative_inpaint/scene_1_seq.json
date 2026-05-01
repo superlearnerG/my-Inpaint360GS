@@ -1,0 +1,53 @@
+{
+  "base_iteration": 2000,
+  "defaults": {
+    "resolution": 1,
+    "removal_thresh": 0.3,
+    "lambda_dssim": 0.8,
+    "opacity_init": 0.1,
+    "lambda_lpips": 0.0005,
+    "finetune_iteration": 5000,
+    "circle_radius": -1.0,
+    "target_object_radius": -1.0
+  },
+  "mask_provider": {
+    "type": "auto_segtrack_bbox",
+    "sync_segment_track_assets": false,
+    "gpu_id": 0,
+    "sam_model_type": "vit_b",
+    "aot_model": "r50_deaotl",
+    "tracking": true,
+    "strict_tracking": false,
+    "clean_output": true,
+    "save_debug": true,
+    "points_per_side": 16,
+    "long_term_mem_gap": 9999,
+    "max_len_long_term": 9999,
+    "coarse_mask_source": "virtual_objects_pred",
+    "prompt_frame_source": "removal_render",
+    "coarse_min_area": 128,
+    "coarse_dilate": 7,
+    "bbox_expand_ratio": 0.1,
+    "bbox_min_pad": 12,
+    "prior_dilate": 11,
+    "candidate_min_area": 96,
+    "candidate_min_inside_ratio": 0.2,
+    "candidate_min_bbox_iou": 0.08,
+    "max_area_to_box_ratio": 1.75,
+    "final_close": 5,
+    "final_dilate": 5,
+    "reference_refresh_gap": 1
+  },
+  "lama": {
+    "backend": "simple",
+    "data_name_prefix": "fruits"
+  },
+  "rounds": [
+    { "target_id": [12], "surrounding_ids": [76, 63, 25, 38, 51] },
+    { "target_id": [51], "surrounding_ids": [] },
+    { "target_id": [38], "surrounding_ids": [] },
+    { "target_id": [25], "surrounding_ids": [] },
+    { "target_id": [63], "surrounding_ids": [] },
+    { "target_id": [76], "surrounding_ids": [] }
+  ]
+}

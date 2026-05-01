@@ -18,6 +18,33 @@ RENDER_INTERMEDIATE=0
 START_ROUND=0
 FORCE=0
 STORAGE_MODE=full
+USE_DEPTH_LOSS=0
+DEPTHS=""
+DEPTH_SCALE=0.0
+DEPTH_L1_WEIGHT_INIT=1.0
+DEPTH_L1_WEIGHT_FINAL=0.01
+
+write_time_consuming() {
+  local end_time end_text elapsed hours minutes seconds elapsed_hms output_path
+  end_time="$(date +%s)"
+  end_text="$(date '+%F %T')"
+  elapsed=$((end_time - PIPELINE_START_TIME))
+  hours=$((elapsed / 3600))
+  minutes=$(((elapsed % 3600) / 60))
+  seconds=$((elapsed % 60))
+  printf -v elapsed_hms "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+  mkdir -p "$MODEL_PATH"
+  output_path="$MODEL_PATH/time_consuming.txt"
+  {
+    printf 'source_path: %s\n' "$SOURCE_PATH"
+    printf 'model_path: %s\n' "$MODEL_PATH"
+    printf 'start_time: %s\n' "$PIPELINE_START_TEXT"
+    printf 'end_time: %s\n' "$end_text"
+    printf 'elapsed_seconds: %d\n' "$elapsed"
+    printf 'elapsed_hms: %s\n' "$elapsed_hms"
+  } > "$output_path"
+  echo "[$end_text] Total pipeline time: $elapsed_hms ($elapsed seconds). Wrote $output_path"
+}
 
 usage() {
   cat <<'EOF'
@@ -30,6 +57,7 @@ Usage:
     [--start_round <round_index>] \
     [--force] \
     [--storage_mode <full|lite|minimal>] \
+    [--use_depth_loss] \
     [--render_intermediate]
 
 Required arguments:
@@ -41,6 +69,13 @@ Required arguments:
   --force                 Rebuild each executed round workspace during prepare-round.
   --storage_mode          Output retention mode: full, lite, or minimal. Default: full.
   --render_intermediate   Render intermediate non-final-round outputs. Default: disabled, only the final round render is kept.
+  --use_depth_loss        Enable raw .npy inverse-depth supervision during vanilla 3DGS training.
+  --depths <path>         Raw .npy depth folder. Default when enabled: <source_path>/depth.
+  --depth_scale <v>       Raw-depth to COLMAP/3DGS scale. Default: 0.0, estimate from COLMAP tracks.
+  --depth_l1_weight_init <v>
+                          Initial inverse-depth loss weight. Default: 1.0.
+  --depth_l1_weight_final <v>
+                          Final inverse-depth loss weight. Default: 0.01.
 
 Optional environment variables:
   PYTHON_BIN              Python executable to use. Default: python
@@ -81,6 +116,26 @@ while [[ $# -gt 0 ]]; do
     --render_intermediate)
       RENDER_INTERMEDIATE=1
       shift
+      ;;
+    --use_depth_loss)
+      USE_DEPTH_LOSS=1
+      shift
+      ;;
+    --depths)
+      DEPTHS="$2"
+      shift 2
+      ;;
+    --depth_scale)
+      DEPTH_SCALE="$2"
+      shift 2
+      ;;
+    --depth_l1_weight_init)
+      DEPTH_L1_WEIGHT_INIT="$2"
+      shift 2
+      ;;
+    --depth_l1_weight_final)
+      DEPTH_L1_WEIGHT_FINAL="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -129,25 +184,43 @@ case "$STORAGE_MODE" in
     ;;
 esac
 
+PIPELINE_START_TIME="$(date +%s)"
+PIPELINE_START_TEXT="$(date '+%F %T')"
+
 VANILLA_3DGS_PATH="${MODEL_PATH}/3dgs_output"
 
-# echo "[$(date '+%F %T')] train vanilla 3DGS"
-# "$PYTHON_BIN" "$SCRIPT_DIR/gaussian_splatting/train.py" \
-#   -s "$SOURCE_PATH" \
-#   -m "$VANILLA_3DGS_PATH" \
-#   --init_mode "sparse" \
-#   --eval
+TRAIN_DEPTH_ARGS=()
+if (( USE_DEPTH_LOSS )); then
+  if [[ -z "$DEPTHS" ]]; then
+    DEPTHS="depth"
+  fi
+  TRAIN_DEPTH_ARGS+=(
+    --use_depth_loss
+    --depths "$DEPTHS"
+    --depth_scale "$DEPTH_SCALE"
+    --depth_l1_weight_init "$DEPTH_L1_WEIGHT_INIT"
+    --depth_l1_weight_final "$DEPTH_L1_WEIGHT_FINAL"
+  )
+fi
 
-# export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/seg/detectron2${PYTHONPATH:+:$PYTHONPATH}"
+echo "[$(date '+%F %T')] train vanilla 3DGS"
+"$PYTHON_BIN" "$SCRIPT_DIR/gaussian_splatting/train.py" \
+  -s "$SOURCE_PATH" \
+  -m "$VANILLA_3DGS_PATH" \
+  --init_mode "sparse" \
+  --eval \
+  "${TRAIN_DEPTH_ARGS[@]}"
 
-# echo "[$(date '+%F %T')] distill object features"
-# "$PYTHON_BIN" "$SCRIPT_DIR/seg/distillation.py" \
-#   --source_path "$SOURCE_PATH" \
-#   --model_path "$MODEL_PATH" \
-#   --vanilla_3dgs_path "$VANILLA_3DGS_PATH" \
-#   --object_path object_mask \
-#   --config_file "$SCRIPT_DIR/config/object_distill/train_distill.json" \
-#   --eval
+export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/seg/detectron2${PYTHONPATH:+:$PYTHONPATH}"
+
+echo "[$(date '+%F %T')] distill object features"
+"$PYTHON_BIN" "$SCRIPT_DIR/seg/distillation.py" \
+  --source_path "$SOURCE_PATH" \
+  --model_path "$MODEL_PATH" \
+  --vanilla_3dgs_path "$VANILLA_3DGS_PATH" \
+  --object_path object_mask \
+  --config_file "$SCRIPT_DIR/config/object_distill/train_distill.json" \
+  --eval
 
 run_stage() {
   local command="$1"
@@ -180,6 +253,8 @@ for (( round_index=START_ROUND; round_index<OBJECT_NUM; round_index++ )); do
   run_stage run-simple-lama "$round_index" --simple_lama_device "$SIMPLE_LAMA_DEVICE"
   run_stage finalize-round "$round_index"
 done
+
+write_time_consuming
 
 # 用法
 # bash pipeline.sh \
