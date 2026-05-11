@@ -204,6 +204,23 @@ def render_path_video(source_path, model_path, iteration, views, gaussians, pipe
         _write_video(os.path.join(render_path, "render_traj_combined.mp4"), combined_frames, fps)
 
 
+def render_video_func_wriva(source_path, model_path, iteration, views, gaussians, pipeline, background, classifier, fps=30):
+    return render_path_video(
+        source_path,
+        model_path,
+        iteration,
+        views,
+        gaussians,
+        pipeline,
+        background,
+        classifier,
+        n_frames=240,
+        fps=fps,
+        output_root="video",
+        legacy_video=True,
+    )
+
+
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool,
                 render_video : bool, render_path : bool, render_path_frames : int, render_path_fps : int,
                 storage_mode: str = "full"):
