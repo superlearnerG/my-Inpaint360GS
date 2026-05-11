@@ -17,6 +17,14 @@ import cv2
 
 WARNED = False
 
+def _open_image_preserve_alpha(image_path):
+    image = Image.open(image_path)
+    if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+        return image.convert("RGBA")
+    if image.mode == "RGB":
+        return image
+    return image.convert("RGB")
+
 def _raw_depth_array_2d(depth, depth_path):
     depth = np.asarray(depth)
     if depth.ndim == 3:
@@ -39,7 +47,7 @@ def _load_raw_invdepthmap(depth_path, depth_scale):
     return invdepthmap, valid.astype(np.float32)
 
 def loadCam(args, id, cam_info, resolution_scale, is_nerf_synthetic, is_test_dataset):
-    image = Image.open(cam_info.image_path)
+    image = _open_image_preserve_alpha(cam_info.image_path)
 
     invdepthmask = None
     raw_depth_path = getattr(cam_info, "raw_depth_path", "")

@@ -26,6 +26,23 @@ def PILtoTorch(pil_image, resolution):
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
+def compose_image_with_background(image, alpha_mask, background):
+    if alpha_mask is None:
+        return image
+    alpha = alpha_mask.to(device=image.device, dtype=image.dtype)
+    if alpha.ndim == 2:
+        alpha = alpha.unsqueeze(0)
+    if alpha.shape[0] != 1:
+        alpha = alpha[:1]
+    bg = torch.as_tensor(background, dtype=image.dtype, device=image.device).view(3, 1, 1)
+    return image * alpha + bg * (1.0 - alpha)
+
+def compose_camera_gt_with_background(camera, background):
+    alpha_mask = getattr(camera, "gt_alpha_mask", None)
+    if alpha_mask is None:
+        alpha_mask = getattr(camera, "alpha_mask", None)
+    return compose_image_with_background(camera.original_image[0:3, :, :], alpha_mask, background)
+
 def get_expon_lr_func(
     lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
 ):

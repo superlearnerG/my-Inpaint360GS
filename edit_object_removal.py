@@ -18,7 +18,7 @@ from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
 import torchvision
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, compose_camera_gt_with_background
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams, get_combined_args
 from gaussian_renderer import GaussianModel
@@ -304,7 +304,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         pred_obj_mask = pred_obj_mask.cpu().numpy().astype(np.uint8)
         Image.fromarray(pred_obj_mask).save(os.path.join(pred_obj_path, view.image_name + ".png"))
         Image.fromarray(pred_obj_color_mask).save(os.path.join(pred_obj_color_path, view.image_name + ".png"))
-        gt = view.original_image[0:3, :, :]
+        gt = compose_camera_gt_with_background(view, background)
         torchvision.utils.save_image(rendering, os.path.join(render_path, view.image_name + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
 

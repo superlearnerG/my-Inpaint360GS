@@ -43,7 +43,13 @@
     "data_name_prefix": "figurines_old"
   },
   "rounds": [
-    { "target_id": [85, 17, 34], "surrounding_ids": [] },
-    { "target_id": [68, 153, 102, 136, 51], "surrounding_ids": [] }
+    { "target_id": [17], "surrounding_ids": [] },
+    { "target_id": [85], "surrounding_ids": [] },
+    { "target_id": [68], "surrounding_ids": [] },
+    { "target_id": [34], "surrounding_ids": [] },
+    { "target_id": [51], "surrounding_ids": [] },
+    { "target_id": [153], "surrounding_ids": [] },
+    { "target_id": [136], "surrounding_ids": [] },
+    { "target_id": [102], "surrounding_ids": [] }
   ]
 }

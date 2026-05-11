@@ -41,11 +41,14 @@ class Camera(nn.Module):
             self.data_device = torch.device("cuda")
 
         resized_image_rgb = PILtoTorch(image, resolution)
+        if resized_image_rgb.shape[0] == 1:
+            resized_image_rgb = resized_image_rgb.repeat(3, 1, 1)
         gt_image = resized_image_rgb[:3, ...]
-        self.alpha_mask = None
+        self.gt_alpha_mask = None
         if resized_image_rgb.shape[0] == 4:
-            self.alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
-        else: 
+            self.gt_alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
+            self.alpha_mask = self.gt_alpha_mask.clone()
+        else:
             self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
 
         if train_test_exp and is_test_view:

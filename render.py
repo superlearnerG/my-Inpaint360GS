@@ -8,12 +8,13 @@
 
 import torch
 from scene import Scene
+import copy
 import os
 from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
 import torchvision
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, compose_camera_gt_with_background
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
@@ -26,6 +27,10 @@ import colorsys
 import cv2
 from sklearn.decomposition import PCA
 import json
+try:
+    import mediapy as media
+except ImportError:
+    media = None
 
 
 def id2rgb(id, max_num_obj=256): 
@@ -104,7 +109,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         pred_obj_mask = pred_obj_mask.cpu().numpy().astype(np.uint8)  
         Image.fromarray(pred_obj_mask).save(os.path.join(pred_obj_path, view.image_name + ".png"))
         Image.fromarray(pred_obj_color_mask).save(os.path.join(pred_obj_color_path, view.image_name + ".png"))
-        gt = view.original_image[0:3, :, :]
+        gt = compose_camera_gt_with_background(view, background)
         torchvision.utils.save_image(rendering, os.path.join(render_path, view.image_name + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
 
@@ -123,48 +128,85 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
 
 
-def render_video_func_wriva(source_path, model_path, iteration, views, gaussians, pipeline, background, classifier, fps=30):
+def _set_camera_pose(view, pose):
+    view.R = pose[:3, :3].T
+    view.T = pose[:3, 3]
+    view.world_view_transform = torch.tensor(getWorld2View2(view.R, view.T, view.trans, view.scale)).transpose(0, 1).cuda()
+    view.full_proj_transform = (view.world_view_transform.unsqueeze(0).bmm(view.projection_matrix.unsqueeze(0))).squeeze(0)
+    view.camera_center = view.world_view_transform.inverse()[3, :3]
 
-    render_path = os.path.join(model_path, 'video', "ours_{}".format(iteration))
-    print(f"\nThe video will be save in {render_path}")
-    makedirs(render_path, exist_ok=True)
-    view = views[0]
-    render_poses = generate_ellipse_path(views)
 
-    size = (view.original_image.shape[2] * 2, int(view.original_image.shape[1] * 1))
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    final_video = cv2.VideoWriter(os.path.join(render_path, 'final_video.mp4'), fourcc, fps, size)
+def _tensor_to_rgb8(image):
+    return (torch.clamp(image, 0.0, 1.0).permute(1, 2, 0).detach().cpu().numpy() * 255.0).astype(np.uint8)
 
-    video_images_list = []
+
+def _write_video(video_path, frames, fps):
+    if not frames:
+        return
+    frames = [frame[:frame.shape[0] // 2 * 2, :frame.shape[1] // 2 * 2] for frame in frames]
+    if media is not None:
+        with media.VideoWriter(video_path, shape=frames[0].shape[:2], codec="h264", fps=fps, crf=18, input_format="rgb") as writer:
+            for frame in frames:
+                writer.add_image(frame)
+        return
+
+    height, width = frames[0].shape[:2]
+    writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    for frame in frames:
+        writer.write(frame[:, :, ::-1])
+    writer.release()
+
+
+def render_path_video(source_path, model_path, iteration, views, gaussians, pipeline, background, classifier,
+                      n_frames=240, fps=30, output_root="traj", legacy_video=False):
+
+    render_path = os.path.join(model_path, output_root, "ours_{}".format(iteration))
+    print(f"\nThe trajectory video will be saved in {render_path}")
+    renders_path = os.path.join(render_path, "renders")
+    pred_obj_color_path = os.path.join(render_path, "objects_pred_color")
+    combined_path = os.path.join(render_path, "combined")
+    makedirs(renders_path, exist_ok=True)
+    makedirs(pred_obj_color_path, exist_ok=True)
+    makedirs(combined_path, exist_ok=True)
+
+    render_poses = generate_ellipse_path(views, n_frames=n_frames)
+    color_frames, object_frames, combined_frames = [], [], []
     for idx, pose in enumerate(tqdm(render_poses, desc="Rendering progress")):
-        view.world_view_transform = torch.tensor(getWorld2View2(pose[:3, :3].T, pose[:3, 3], view.trans, view.scale)).transpose(0, 1).cuda()
-        view.full_proj_transform = (view.world_view_transform.unsqueeze(0).bmm(view.projection_matrix.unsqueeze(0))).squeeze(0)
-        view.camera_center = view.world_view_transform.inverse()[3, :3]
+        view = copy.deepcopy(views[0])
+        view.image_name = "{0:05d}".format(idx)
+        _set_camera_pose(view, pose)
         rendering = render(view, gaussians, pipeline, background)
 
-        img = torch.clamp(rendering["render"], min=0., max=1.).cpu()
+        image = torch.clamp(rendering["render"], min=0., max=1.).cpu()
+        rgb_frame = _tensor_to_rgb8(image)
+        torchvision.utils.save_image(image, os.path.join(renders_path, view.image_name + ".png"))
 
-        rendering_obj = rendering["render_object"] 
+        rendering_obj = rendering["render_object"]
         logits = classifier(rendering_obj)
-        pred_obj = torch.argmax(logits,dim=0)
-        pred_obj_mask = visualize_obj(pred_obj.cpu().numpy().astype(np.uint8)) / 255.
-        pred_obj_mask = torch.clamp(torch.tensor(pred_obj_mask), min=0., max=1.).permute(2, 0, 1)
+        pred_obj = torch.argmax(logits, dim=0)
+        pred_obj_frame = visualize_obj(pred_obj.cpu().numpy().astype(np.uint8))
+        Image.fromarray(pred_obj_frame).save(os.path.join(pred_obj_color_path, view.image_name + ".png"))
 
-        combined_img = torch.cat([img, pred_obj_mask], dim=2)
-        torchvision.utils.save_image(combined_img, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        video_img = (combined_img.permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)[..., ::-1] 
-        video_images_list.append(video_img)  
+        combined_frame = np.concatenate([rgb_frame, pred_obj_frame], axis=1)
+        Image.fromarray(combined_frame).save(os.path.join(combined_path, view.image_name + ".png"))
+        if legacy_video:
+            Image.fromarray(combined_frame).save(os.path.join(render_path, view.image_name + ".png"))
 
-    new_video_images_list = video_images_list
+        color_frames.append(rgb_frame)
+        object_frames.append(pred_obj_frame)
+        combined_frames.append(combined_frame)
 
-    for video_img in new_video_images_list:
-        video_img = video_img[:size[1], :, :]
-        final_video.write(video_img)
+    if legacy_video:
+        _write_video(os.path.join(render_path, "final_video.mp4"), combined_frames, fps)
+    else:
+        _write_video(os.path.join(render_path, "render_traj_color.mp4"), color_frames, fps)
+        _write_video(os.path.join(render_path, "render_traj_objects.mp4"), object_frames, fps)
+        _write_video(os.path.join(render_path, "render_traj_combined.mp4"), combined_frames, fps)
 
-    final_video.release()
 
-
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, render_video : bool, storage_mode: str = "full"):
+def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool,
+                render_video : bool, render_path : bool, render_path_frames : int, render_path_fps : int,
+                storage_mode: str = "full"):
 
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
@@ -188,9 +230,15 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+        if render_path:
+            render_path_video(dataset.source_path, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(),
+                              gaussians, pipeline, background, classifier,
+                              n_frames=render_path_frames, fps=render_path_fps, output_root="traj")
+
         if render_video:
-            render_video_func_wriva(dataset.source_path, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(),
-                         gaussians, pipeline, background, classifier, fps = 30)
+            render_path_video(dataset.source_path, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(),
+                              gaussians, pipeline, background, classifier,
+                              n_frames=render_path_frames, fps=render_path_fps, output_root="video", legacy_video=True)
 
         if not skip_train:
              render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier, storage_mode=storage_mode)
@@ -208,14 +256,18 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Testing script parameters")
     model = ModelParams(parser, sentinel=True)
     pipeline = PipelineParams(parser)
-    parser.add_argument("--iteration", default=-1)
+    parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--render_video", action="store_true")
+    parser.add_argument("--render_path", action="store_true")
+    parser.add_argument("--render_path_frames", default=240, type=int)
+    parser.add_argument("--render_path_fps", default=30, type=int)
     parser.add_argument("--storage_mode", choices=["full", "lite", "minimal"], default="full", help="Output retention mode.")
     args = get_combined_args(parser)
 
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.render_video, args.storage_mode)
+    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test,
+                args.render_video, args.render_path, args.render_path_frames, args.render_path_fps, args.storage_mode)

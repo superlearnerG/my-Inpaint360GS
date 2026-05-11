@@ -42,6 +42,14 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
 
+def _open_image_preserve_alpha(image_path):
+    image = Image.open(image_path)
+    if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+        return image.convert("RGBA")
+    if image.mode == "RGB":
+        return image
+    return image.convert("RGB")
+
 def getNerfppNorm(cam_info):
 
 
@@ -104,7 +112,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, objects_fol
             if fname_lower.startswith(base_name) and fname_lower.endswith((".jpg", ".jpeg", ".png")):
                 image_path = os.path.join(images_folder, f)
                 break
-        image = Image.open(image_path).convert("RGB") if image_path else None
+        image = _open_image_preserve_alpha(image_path) if image_path else None
         image_name = os.path.basename(image_path).split(".")[0] if image_path else None
 
         possible_extensions = ['.png', '.jpg', '.JPG']

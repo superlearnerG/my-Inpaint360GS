@@ -39,7 +39,7 @@ from PIL import Image
 import torchvision
 import cv2
 from edit_object_removal import points_inside_convex_hull
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, compose_camera_gt_with_background
 from utils.pose_utils import generate_ellipse_path
 from utils.graphics_utils import getWorld2View2,getProjectionMatrix
 from utils.general_utils import PILtoTorch
@@ -273,7 +273,7 @@ def finetune_inpaint(args, opt, model_path, iteration, views, gaussians, pipelin
         mask2d = viewpoint_cam.objects > 128
         if not torch.any(mask2d):
             continue
-        gt_image = viewpoint_cam.original_image.cuda()
+        gt_image = compose_camera_gt_with_background(viewpoint_cam, background).cuda()
         Ll1 = masked_l1_loss(image, gt_image, ~mask2d)  
 
         bbox = mask_to_bbox(mask2d)
@@ -397,7 +397,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         cv2.imwrite(os.path.join(depth_path, view.image_name + ".png"), depth)
 
         pred_obj_mask = pred_obj_mask.cpu().numpy().astype(np.uint8)
-        gt = view.original_image[0:3, :, :]
+        gt = compose_camera_gt_with_background(view, background)
         torchvision.utils.save_image(rendering, os.path.join(render_path, view.image_name + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
 
@@ -456,11 +456,19 @@ def inpaint(dataset : ModelParams, iteration : int, pipeline : PipelineParams, s
         view_tmp.objects = torch.from_numpy(np.array(objects)).to(view.data_device)
 
         image_path = find_image_for_stem(ready_for_3dinpaint_color_dir, view_tmp.image_name)
-        image = Image.open(image_path).convert("RGB") 
+        image = Image.open(image_path)
         resolution=(view.image_width, view.image_height)
         resized_image_rgb = PILtoTorch(image, resolution)
+        if resized_image_rgb.shape[0] == 1:
+            resized_image_rgb = resized_image_rgb.repeat(3, 1, 1)
         gt_image = resized_image_rgb[:3, ...].clamp(0.0, 1.0).to(view.data_device)
         view_tmp.original_image = gt_image * torch.ones((1, view.image_height, view.image_width), device=view.data_device)
+        if resized_image_rgb.shape[0] == 4:
+            view_tmp.gt_alpha_mask = resized_image_rgb[3:4, ...].to(view.data_device)
+            view_tmp.alpha_mask = view_tmp.gt_alpha_mask
+        else:
+            view_tmp.gt_alpha_mask = None
+            view_tmp.alpha_mask = None
 
         view_tmp.R = pose[:3, :3].T
         view_tmp.T = pose[:3, 3]
